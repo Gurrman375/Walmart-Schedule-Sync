@@ -1,5 +1,6 @@
-import requests, json
-import os.path
+import  json
+import os.path, sys
+from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright
 from time import sleep
 import datetime as dt
@@ -21,52 +22,61 @@ def main():
 
     sleep(5)
 
-    print("Timezone that is appropriate to you from -11:00 to +14:00. Include + or Minus. Do not include labels like PST, EST, MST, or other.")
-    timezone = input("Enter a timezone (-11:00 to +14:00): ")
+    current_time = datetime.now(timezone.utc).astimezone()
 
-    sleep(2)
+    offset_str = current_time.strftime('%z')
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
-        page = context.new_page()
-        page.set_default_timeout(600000)
-        page.goto("https://one.walmart.com/content/usone/en_us/me/my-schedule.html")
-        sleep(30)
+    current_timezone = f"{offset_str[0:3]}:{offset_str[3:]}"
+    try:
+        os.system("playwright install")
+    except Exception as e:
+        print(e)
+        waitTill()
+        sys.exit(-1)
+        
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            page.set_default_timeout(600000)
+            page.goto("https://one.walmart.com/content/usone/en_us/me/my-schedule.html")
+            sleep(30)
 
-        # Collect all responses
-        responses = []
-        def handle_response(res):
-            responses.append(res)
+            # Collect all responses
+            responses = []
+            def handle_response(res):
+                responses.append(res)
 
-        page.on("response", handle_response)
+            page.on("response", handle_response)
 
-        # Wait for the specific request to be made
-        page.wait_for_url("https://one.walmart.com/content/usone/en_us/me/my-schedule.html")
+            # Wait for the specific request to be made
+            page.wait_for_url("https://one.walmart.com/content/usone/en_us/me/my-schedule.html")
 
-        # Filter responses by URL pattern
-        target_url = "https://one.walmart.com/bin/adp/onprem/snapshot.api"
-        filtered_responses = [res for res in responses if res.url.startswith(target_url)]
+            # Filter responses by URL pattern
+            target_url = "https://one.walmart.com/bin/adp/onprem/snapshot.api"
+            filtered_responses = [res for res in responses if res.url.startswith(target_url)]
 
-        # Print filtered responses and response text
-        for res in filtered_responses:
-            print(f"Found response: {res.url} - {res.status}")
-            print("Response Text:")
-            if(res.text()):
-                response = res.text()
-                break
+            # Print filtered responses and response text
+            for res in filtered_responses:
+                # print(f"Found response: {res.url} - {res.status}")
+                # print("Response Text:")
+                if(res.text()):
+                    response = res.text()
+                    break
 
-        browser.close()
+            browser.close()
+    except Exception as e:
+        print(e)
+        waitTill()
 
     response = json.loads(response)
-
-    print(response)
 
     creds = None
 
     if os.path.exists("tokens.json"):
         creds = Credentials.from_authorized_user_file("tokens.json")
-        print("Testing Tokens")
+        print("Token Path Exists")
     elif not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             print("Refreshing Tokens")
@@ -78,7 +88,7 @@ def main():
     
     with open("tokens.json", "w") as token:
         token.write(creds.to_json())
-        print("wrote token")
+        print("Wrote Token")
 
     try:
         service = build("calendar", "v3", credentials=creds)
@@ -92,7 +102,7 @@ def main():
                 print("Looking for Calendar")        
 
         for a in response["payload"]["weeks"]:
-            print("Week:", a["wmWeek"])
+            # print("Week:", a["wmWeek"])
             for b in a["schedules"]:
                 for c in b["events"]:
                     if(c["type"] == "Job"):
@@ -100,18 +110,28 @@ def main():
                             "summary": c["jobDescription"],
                             "description": "Your job",
                             "start": {
-                                "dateTime": c["startTime"]+":00"+timezone, #-11:00 to +14:00
+                                "dateTime": c["startTime"]+":00"+current_timezone, #-11:00 to +14:00
                             },
                             "end": {
-                                "dateTime": c["endTime"]+":00"+timezone,
+                                "dateTime": c["endTime"]+":00"+current_timezone,
+                            },
+                            "reminders": {
+                                "useDefault": False,
+                                "overrides": [
+                                    {
+                                        "method": "popup",
+                                        "minutes": 60
+                                    }
+                                ]
                             }
                         }
                         event = service.events().insert(calendarId=calendar, body=event).execute()
-                        print(f"Event created {event.get('htmlLink')}")
+                        # print(f"Event created {event.get('htmlLink')}")
                     elif(c["type"] == "Meal"):
-                        print(f"Meal Start: {c['startTime']}, Meal End: {c['endTime']}")
+                        print()
+                        # print(f"Meal Start: {c['startTime']}, Meal End: {c['endTime']}")
         
-        now = dt.datetime.now(tz=dt.timezone.utc).isoformat()
+        now = dt.datetime.now(tz=dt.timezone.utc).astimezone().isoformat()
         three_weeks_from_now = dt.datetime.fromisoformat(now) + dt.timedelta(days=14)
         three_weeks_from_now = three_weeks_from_now - dt.timedelta(days=three_weeks_from_now.weekday())
         event = {
@@ -125,7 +145,7 @@ def main():
             }
         }
         event = service.events().insert(calendarId=calendar, body=event).execute()
-        print(f"Event created {event.get('htmlLink')}")
+        # print(f"Event created {event.get('htmlLink')}")
         waitTill()
     except HttpError as error:
         print("An error occured:", error)
